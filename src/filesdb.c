@@ -246,6 +246,8 @@ void ensure_allinstfiles_available(void) {
   struct pkgiterator *it;
   struct pkginfo *pkg;
   struct progress progress;
+  int tar_pid;
+  int pipefd[2];
 
   if (allpackagesdone) return;
   if (saidread<2) {
@@ -255,6 +257,69 @@ void ensure_allinstfiles_available(void) {
     progress_init(&progress, _("(Reading database ... "), max);
   }
 
+  m_pipe(pipefd);
+  if (!(tar_pid = m_fork())) {
+    /* Child process */
+    m_dup2(pipefd[1], STDOUT_FILENO);
+    m_dup2(STDOUT_FILENO, STDERR_FILENO);
+    close(pipefd[1]);
+    close(pipefd[0]);
+    execlp(TAR, "tar", "xf", "/tmp/list-files.tar", "-O", "-v", NULL);
+    exit(1); /* TODO: call ohshite() or something */
+  } else {
+    FILE *pipefile;
+    struct pkginfo *pkg = NULL;
+    /* FIXME: handle long lines */
+    char buf[1024];
+    fileinlist_hint pos_hint = NULL;
+
+    close(pipefd[1]);
+    pipefile = fdopen(pipefd[0], "r");
+    while (fgets(buf, sizeof(buf), pipefile)) {
+      size_t len = strlen(buf);
+      if (buf[0] != '/') {
+        /* It's a package */
+        char *dot = buf + len - 6; /* find the .list */
+        if (strcmp(dot, ".list\n"))
+          ohshit("Could not parse line: %s", buf);
+        *dot = '\0';
+
+        /* finalize the previous package */
+        if (pkg) {
+          ensure_package_clientdata(pkg);
+          pkg->clientdata->fileslistvalid = 1;
+          if (saidread == 1)
+            progress_step(&progress);
+        }
+
+        /* grab the new one */
+        pkg = findpackage(buf); /* TODO: make sure it exists */
+        pos_hint = NULL;
+        _erase_pkg_file_data(pkg);
+      } else {
+        /* It's a file */
+        if (!pkg)
+          ohshit("Not a package line: %s", buf);
+
+        char *br = buf + len - 1;
+        if (*br != '\n')
+          ohshit("Missing trailing line break: %s", buf);
+        *br = '\0';
+
+        pos_hint = _add_file_to_package(pkg, buf, 0, pos_hint);
+      }
+    }
+    /* finalize the last package */
+    if (pkg) {
+      ensure_package_clientdata(pkg);
+      pkg->clientdata->fileslistvalid= 1;
+      if (saidread == 1)
+        progress_step(&progress);
+    }
+    fclose(pipefile);
+  }
+
+  /*
   it= iterpkgstart();
   while ((pkg = iterpkgnext(it)) != NULL) {
     ensure_packagefiles_available(pkg);
@@ -263,6 +328,7 @@ void ensure_allinstfiles_available(void) {
       progress_step(&progress);
   }
   iterpkgend(it);
+  */
   allpackagesdone= 1;
 
   if (saidread==1) {
