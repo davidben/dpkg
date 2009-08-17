@@ -69,22 +69,15 @@ void note_must_reread_files_inpackage(struct pkginfo *pkg) {
 
 static int saidread=0;
 
- /* load the list of files in this package into memory, or update the
-  * list if it is there but stale
+ /* erase the files saved in pkg
   */
-void ensure_packagefiles_available(struct pkginfo *pkg) {
-  int fd;
-  const char *filelistfile;
-  struct fileinlist **lendp, *newent, *current;
+static void _erase_pkg_file_data(struct pkginfo *pkg) {
+  struct fileinlist *current;
   struct filepackages *packageslump;
-  int search, findlast, putat;
-  struct stat stat_buf;
-  char *loaded_list, *loaded_list_end, *thisline, *nextline, *ptr;
+  int search, findlast;
 
-  if (pkg->clientdata && pkg->clientdata->fileslistvalid) return;
-  ensure_package_clientdata(pkg);
-
-  /* Throw away any the stale data, if there was any. */
+  if (!pkg->clientdata)
+    return; /* nothing to empty */
   for (current= pkg->clientdata->files;
        current;
        current= current->next) {
@@ -121,6 +114,25 @@ void ensure_packagefiles_available(struct pkginfo *pkg) {
      */
   }
   pkg->clientdata->files = NULL;
+}
+
+ /* load the list of files in this package into memory, or update the
+  * list if it is there but stale
+  */
+void ensure_packagefiles_available(struct pkginfo *pkg) {
+  int fd;
+  const char *filelistfile;
+  struct fileinlist **lendp, *newent;
+  struct filepackages *packageslump;
+  int putat;
+  struct stat stat_buf;
+  char *loaded_list, *loaded_list_end, *thisline, *nextline, *ptr;
+
+  if (pkg->clientdata && pkg->clientdata->fileslistvalid) return;
+  ensure_package_clientdata(pkg);
+
+  /* Throw away any the stale data, if there was any. */
+  _erase_pkg_file_data(pkg);
 
   /* Packages which aren't installed don't have a files list. */
   if (pkg->status == stat_notinstalled) {
