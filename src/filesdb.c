@@ -116,15 +116,59 @@ static void _erase_pkg_file_data(struct pkginfo *pkg) {
   pkg->clientdata->files = NULL;
 }
 
+ /* add a file to pkg. pos_hint is to help find the end of the list
+  */
+typedef struct fileinlist **fileinlist_hint;
+static fileinlist_hint _add_file_to_package(struct pkginfo *pkg, const char *file, enum fnnflags flags, fileinlist_hint pos_hint) {
+  struct fileinlist *newent;
+  struct filepackages *packageslump;
+  int putat;
+
+  ensure_package_clientdata(pkg);
+  if (pos_hint == NULL)
+    pos_hint = &pkg->clientdata->files;
+  /* Make sure we're at the end */
+  while ((*pos_hint) != NULL) {
+    pos_hint = &((*pos_hint)->next);
+  }
+
+  /* Create a new node */
+  newent = nfmalloc(sizeof(struct fileinlist));
+  newent->namenode = findnamenode(file, flags);
+  newent->next = NULL;
+  *pos_hint = newent;
+  pos_hint = &newent->next;
+
+  /* Add pkg to newent's package list */
+  packageslump = newent->namenode->packages;
+  putat = 0;
+  if (packageslump) {
+    for (; putat < PERFILEPACKAGESLUMP && packageslump->pkgs[putat];
+         putat++);
+    if (putat >= PERFILEPACKAGESLUMP)
+      packageslump = NULL;
+  }
+  if (!packageslump) {
+    packageslump = nfmalloc(sizeof(struct filepackages));
+    packageslump->more = newent->namenode->packages;
+    newent->namenode->packages = packageslump;
+    putat= 0;
+  }
+  packageslump->pkgs[putat]= pkg;
+  if (++putat < PERFILEPACKAGESLUMP)
+    packageslump->pkgs[putat] = NULL;
+
+  /* Return the position for the next guy */
+  return pos_hint;
+}
+
  /* load the list of files in this package into memory, or update the
   * list if it is there but stale
   */
 void ensure_packagefiles_available(struct pkginfo *pkg) {
   int fd;
   const char *filelistfile;
-  struct fileinlist **lendp, *newent;
-  struct filepackages *packageslump;
-  int putat;
+  fileinlist_hint lendp;
   struct stat stat_buf;
   char *loaded_list, *loaded_list_end, *thisline, *nextline, *ptr;
 
@@ -171,7 +215,7 @@ void ensure_packagefiles_available(struct pkginfo *pkg) {
   
     fd_buf_copy(fd, loaded_list, stat_buf.st_size, _("files list for package `%.250s'"), pkg->name);
   
-    lendp= &pkg->clientdata->files;
+    lendp = &pkg->clientdata->files;
     thisline = loaded_list;
     while (thisline < loaded_list_end) {
       if (!(ptr = memchr(thisline, '\n', loaded_list_end - thisline))) 
@@ -185,11 +229,7 @@ void ensure_packagefiles_available(struct pkginfo *pkg) {
       if (ptr == thisline)
         ohshit(_("files list file for package `%.250s' contains empty filename"),pkg->name);
       *ptr = '\0';
-      newent= nfmalloc(sizeof(struct fileinlist));
-      newent->namenode= findnamenode(thisline, fnn_nocopy);
-      newent->next = NULL;
-      *lendp= newent;
-      lendp= &newent->next;
+      lendp = _add_file_to_package(pkg, thisline, fnn_nocopy, lendp);
       thisline = nextline;
     }
   }
@@ -199,25 +239,6 @@ void ensure_packagefiles_available(struct pkginfo *pkg) {
 
   onerr_abort--;
 
-  for (newent= pkg->clientdata->files; newent; newent= newent->next) {
-    packageslump= newent->namenode->packages;
-    putat= 0;
-    if (packageslump) {
-      for (; putat < PERFILEPACKAGESLUMP && packageslump->pkgs[putat];
-           putat++);
-      if (putat >= PERFILEPACKAGESLUMP)
-        packageslump = NULL;
-    }
-    if (!packageslump) {
-      packageslump= nfmalloc(sizeof(struct filepackages));
-      packageslump->more= newent->namenode->packages;
-      newent->namenode->packages= packageslump;
-      putat= 0;
-    }
-    packageslump->pkgs[putat]= pkg;
-    if (++putat < PERFILEPACKAGESLUMP)
-      packageslump->pkgs[putat] = NULL;
-  }      
   pkg->clientdata->fileslistvalid= 1;
 }
 
